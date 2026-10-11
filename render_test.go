@@ -298,6 +298,19 @@ func TestAdvancedNavigation(t *testing.T) {
 		t.Errorf("down past the end: sel %d, want %d", m.sel, n-1)
 	}
 
+	// A filter that shrinks the session list keeps the selection on it.
+	m = press(testModel(100, 40), "d", "d", "a", "down", "down", "down", "enter")
+	for range 60 {
+		m = press(m, "down")
+	}
+	m = press(m, "t", "t", "up")
+	if n := m.listLen(); m.sel != n-2 {
+		t.Errorf("up after the list shrank to %d rows: sel %d, want %d", n, m.sel, n-2)
+	}
+	if m = press(m, "enter"); m.screen != advTimeline {
+		t.Errorf("enter after the list shrank: screen %v, want the timeline", m.screen)
+	}
+
 	m = press(testModel(100, 40), "a", "down", "enter")
 	used, _ = m.used()
 	days := dayTotals(used, m.f.from, m.f.to)

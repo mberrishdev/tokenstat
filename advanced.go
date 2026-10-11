@@ -84,7 +84,14 @@ func (m *model) back() {
 	case advMenu:
 		m.screen, m.sel = dashboard, 0
 	case advTimeline:
-		m.screen = advSessions
+		// The filters can change on the timeline, so find the session again.
+		m.screen, m.sel = advSessions, 0
+		used, _ := m.used()
+		for i, s := range sessions(used) {
+			if s.key == m.session {
+				m.sel = i
+			}
+		}
 	case advLimits, advSpikes, advRent, advSessions, advDrift:
 		for i, item := range menu {
 			if item.screen == m.screen {
@@ -211,29 +218,28 @@ func (m model) spikesView(used []Usage, outputs []Output, w, rows int) []string 
 		peak = max(peak, d.tokens)
 	}
 	med := median(totals)
-	sel := min(m.sel, len(days)-1)
 	listRows := min(len(days), max(3, (rows-6)/2))
 	const labelW, numW = 12, 9
 	barW := inner - 2 - labelW - 2*numW - 2
 	var list []string
-	start := window(sel, listRows)
+	start := window(m.sel, listRows)
 	for i := start; i < min(len(days), start+listRows); i++ {
 		d := days[i]
 		ratio := "·"
 		if med > 0 && d.tokens > 0 {
 			ratio = fmt.Sprintf("%.1f×", float64(d.tokens)/float64(med))
 		}
-		list = append(list, marker(i == sel, padRight(d.day.Format("Mon 02 Jan"), labelW)+padLeft(human(d.tokens), numW)+
+		list = append(list, marker(i == m.sel, padRight(d.day.Format("Mon 02 Jan"), labelW)+padLeft(human(d.tokens), numW)+
 			padLeft(ratio, numW)+"  "+bar(pair{d.tokens, 0}, peak, barW)))
 	}
 	lines := panel("Days", color(dimColor, "↑↓ picks a day · × is the share of the median day"), w, list)
 
 	var why []string
-	for _, kv := range explainDay(days[sel].day, days, used, outputs, m.titles) {
+	for _, kv := range explainDay(days[m.sel].day, days, used, outputs, m.titles) {
 		why = append(why, color(dimColor, padRight(kv[0], 11))+short(kv[1], inner-11))
 	}
 	why = why[:min(len(why), max(1, rows-len(lines)-2))]
-	return append(lines, panel("Why "+days[sel].day.Format("Mon 2 Jan"), "", w, why)...)
+	return append(lines, panel("Why "+days[m.sel].day.Format("Mon 2 Jan"), "", w, why)...)
 }
 
 func rentView(outputs []Output, w, rows int) []string {
@@ -283,9 +289,8 @@ func (m model) sessionsView(used []Usage, w, rows int) []string {
 	if len(list) == 0 {
 		lines = append(lines, color(dimColor, "No sessions for these filters."))
 	}
-	sel := min(m.sel, len(list)-1)
 	listRows := max(1, rows-3)
-	start := window(sel, listRows)
+	start := window(m.sel, listRows)
 	for i := start; i < min(len(list), start+listRows); i++ {
 		s := list[i]
 		name := m.titles[s.key]
@@ -298,7 +303,7 @@ func (m model) sessionsView(used []Usage, w, rows int) []string {
 		}
 		row := padRight(s.start.Format("Mon 02 Jan"), dateW) + color(c, padRight(short(name, nameW-1), nameW)) +
 			padLeft(fmt.Sprint(s.calls), numW) + padLeft(human(s.peak), numW) + padLeft(human(s.tokens), numW)
-		lines = append(lines, marker(i == sel, row))
+		lines = append(lines, marker(i == m.sel, row))
 	}
 	return panel("Sessions", color(dimColor, fmt.Sprintf("%d sessions · enter opens the timeline", len(list))), w, lines)
 }

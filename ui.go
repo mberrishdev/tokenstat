@@ -119,6 +119,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		default:
 			m.pick(msg)
 		}
+		// A filter can shrink the list, so keep the selection on it.
+		m.sel = max(0, min(m.sel, m.listLen()-1))
 	}
 	return m, nil
 }
@@ -155,7 +157,7 @@ func (m *model) browse(k tea.KeyMsg) {
 	case "up":
 		m.sel = max(0, m.sel-1)
 	case "down":
-		m.sel = max(0, min(m.listLen()-1, m.sel+1))
+		m.sel++
 	}
 }
 
