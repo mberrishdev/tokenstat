@@ -1,6 +1,6 @@
 <h1 align="center">tokenstat</h1>
 
-<h3 align="center">See where your Claude Code and Codex tokens go.</h3>
+<h3 align="center">Check your spending tokens in beautiful way</h3>
 
 <p align="center">
   <img src=".github/assets/dashboard.png" width="100%" alt="The tokenstat dashboard: tokens by type, a daily bar chart for Claude Code and Codex, the top projects, and the top models" />
