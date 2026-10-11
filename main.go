@@ -65,7 +65,7 @@ func load() data {
 			if title == "" {
 				title = titleByID[fd.parent]
 			}
-			if title != "" && (fd.parent != "" || strings.Contains(path, "/subagents/")) {
+			if title != "" && fd.sub {
 				title += " (subagent)"
 			}
 			d.titles[path] = title

@@ -88,6 +88,7 @@ type fileData struct {
 	id      string // session id
 	parent  string // parent session id of a Codex subagent
 	title   string
+	sub     bool // a subagent wrote the log
 }
 
 const (
@@ -231,7 +232,7 @@ func parseClaude(path string, r io.Reader) (fileData, error) {
 	byKey := map[string]*call{}
 	tools := map[string]toolUse{}
 	var pending []toolUse
-	sub := strings.Contains(path, "/subagents/")
+	fd.sub = strings.Contains(path, "/subagents/")
 	err := eachLine(r, func(line []byte) {
 		switch {
 		case bytes.Contains(line, []byte(`"type":"ai-title"`)):
@@ -286,7 +287,7 @@ func parseClaude(path string, r io.Reader) (fileData, error) {
 			}
 			c := &call{rec: record{key, Usage{
 				Tokens: tokens, Time: l.Timestamp, Project: project, Tool: Claude, Model: l.Message.Model,
-				Session: path, Version: l.Version, Sub: sub, Context: u.Input + u.CacheRead + u.CacheWrite,
+				Session: path, Version: l.Version, Sub: fd.sub, Context: u.Input + u.CacheRead + u.CacheWrite,
 				Cache1h: u.Cache.OneHour,
 			}}, tools: pending}
 			pending = nil
@@ -386,7 +387,6 @@ func parseCodex(path string, r io.Reader) (fileData, error) {
 	var calls []*call
 	var pending []toolUse
 	project, model, version, lastKey := "", "", "", ""
-	sub := false
 	err := eachLine(r, func(line []byte) {
 		// The line and payload types come first, and the rest can be large.
 		head := line[:min(len(line), 300)]
@@ -414,7 +414,7 @@ func parseCodex(path string, r io.Reader) (fileData, error) {
 				} `json:"subagent"`
 			}
 			if json.Unmarshal(p.Source, &src) == nil && src.Subagent != nil {
-				sub, fd.parent = true, src.Subagent.ThreadSpawn.ParentThreadID
+				fd.sub, fd.parent = true, src.Subagent.ThreadSpawn.ParentThreadID
 			}
 		case l.Type == "turn_context":
 			model = p.Model
@@ -432,7 +432,7 @@ func parseCodex(path string, r io.Reader) (fileData, error) {
 			c := &call{rec: record{key, Usage{
 				Tokens: Tokens{Input: last.Input - last.Cached, Output: last.Output, CacheRead: last.Cached},
 				Time:   l.Timestamp, Project: project, Tool: Codex, Model: model, Session: path,
-				Version: version, Sub: sub, Context: last.Input,
+				Version: version, Sub: fd.sub, Context: last.Input,
 			}}, tools: pending}
 			pending = nil
 			if rl := p.RateLimits; rl != nil {
