@@ -77,12 +77,16 @@ func TestDrift(t *testing.T) {
 }
 
 func TestTimelineEvents(t *testing.T) {
+	// The fourth call comes after a compaction. The fifth call sends less
+	// context than the call before it, but only because a model filter
+	// removed the call between them.
 	d := time.Date(2026, 10, 1, 10, 0, 0, 0, time.Local)
 	usage := []Usage{
 		{Session: "s", Time: d, Context: 10_000},
 		{Session: "s", Time: d.Add(time.Minute), Context: 60_000},
 		{Session: "s", Time: d.Add(3 * time.Hour), Context: 61_000, Miss: 60_000, Gap: 2*time.Hour + 59*time.Minute},
-		{Session: "s", Time: d.Add(3*time.Hour + time.Minute), Context: 8_000},
+		{Session: "s", Time: d.Add(3*time.Hour + time.Minute), Context: 8_000, Compact: true},
+		{Session: "s", Time: d.Add(3*time.Hour + 2*time.Minute), Context: 4_000},
 		{Session: "other", Time: d, Context: 1},
 	}
 	outputs := []Output{
@@ -91,8 +95,8 @@ func TestTimelineEvents(t *testing.T) {
 		{Session: "s", Time: d.Add(3 * time.Hour), Name: "Bash", Detail: "ls", Size: 100},
 	}
 	calls, events := timeline("s", usage, outputs)
-	if len(calls) != 4 {
-		t.Fatalf("got %d calls, want 4", len(calls))
+	if len(calls) != 5 {
+		t.Fatalf("got %d calls, want 5", len(calls))
 	}
 	var marks string
 	for _, e := range events {

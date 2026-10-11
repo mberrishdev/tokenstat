@@ -351,7 +351,7 @@ func timeline(key string, usage []Usage, outputs []Output) ([]Usage, []event) {
 			}
 			events = append(events, event{u.Time, i, markRebuild, text})
 		}
-		if i > 0 && float64(u.Context) < compaction*float64(calls[i-1].Context) {
+		if u.Compact {
 			events = append(events, event{u.Time, i, markCompaction,
 				fmt.Sprintf("compaction: context %s → %s", human(calls[i-1].Context), human(u.Context))})
 		}

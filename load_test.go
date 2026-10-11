@@ -193,6 +193,11 @@ func TestLoadSessionFields(t *testing.T) {
 	if r[3].Miss != 41006 || r[3].Gap != 2*time.Hour+29*time.Minute+40*time.Second {
 		t.Errorf("idle miss: miss %d gap %v", r[3].Miss, r[3].Gap)
 	}
+	for i, u := range r {
+		if u.Compact != (i == 4) {
+			t.Errorf("call %d: compaction %v", i, u.Compact)
+		}
+	}
 	if r[4].Miss != 0 {
 		t.Errorf("compaction counted as a miss of %d", r[4].Miss)
 	}

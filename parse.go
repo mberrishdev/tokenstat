@@ -39,6 +39,7 @@ type Usage struct {
 	Version string        // agent version
 	Sub     bool          // a subagent made the call
 	First   bool          // first call of the session
+	Compact bool          // the context shrank since the previous call: a compaction
 	Context int64         // context tokens sent with the call
 	Gap     time.Duration // time since the previous call of the session
 	Miss    int64         // context tokens written again because the cache missed
@@ -117,11 +118,15 @@ type toolUse struct{ name, detail string }
 // finish sets the fields that depend on the calls around each call of one
 // session, and returns the tool outputs with their size and reads.
 func finish(calls []*call) ([]record, []Output) {
+	for i := 1; i < len(calls); i++ {
+		u := &calls[i].rec.Usage
+		u.Compact = float64(u.Context) < compaction*float64(calls[i-1].rec.Context)
+	}
 	next := make([]int, len(calls)) // index of the first compaction after each call
 	cut := len(calls)
 	for i := len(calls) - 1; i >= 0; i-- {
 		next[i] = cut
-		if i > 0 && float64(calls[i].rec.Context) < compaction*float64(calls[i-1].rec.Context) {
+		if calls[i].rec.Compact {
 			cut = i
 		}
 	}
@@ -134,8 +139,7 @@ func finish(calls []*call) ([]record, []Output) {
 			prev := calls[i-1].rec.Usage
 			u.Gap = u.Time.Sub(prev.Time)
 			growth := u.Context - prev.Context
-			compacted := float64(u.Context) < compaction*float64(prev.Context)
-			if miss := u.Input + u.CacheWrite - max(growth, 0); miss >= missMin && !compacted {
+			if miss := u.Input + u.CacheWrite - max(growth, 0); miss >= missMin && !u.Compact {
 				u.Miss = miss
 			}
 			if growth > 0 && len(c.tools) > 0 {
