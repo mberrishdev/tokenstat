@@ -235,11 +235,56 @@ func (m model) spikesView(used []Usage, outputs []Output, w, rows int) []string 
 	lines := panel("Days", color(dimColor, "↑↓ picks a day · × is the share of the median day"), w, list)
 
 	var why []string
-	for _, kv := range explainDay(days[m.sel].day, days, used, outputs, m.titles) {
+	for _, kv := range dayText(explainDay(days[m.sel].day, days, used, outputs, m.titles)) {
 		why = append(why, color(dimColor, padRight(kv[0], 11))+short(kv[1], inner-11))
 	}
 	why = why[:min(len(why), max(1, rows-len(lines)-2))]
 	return append(lines, panel("Why "+days[m.sel].day.Format("Mon 2 Jan"), "", w, why)...)
+}
+
+// dayText writes the report of a day as label and text pairs.
+func dayText(r dayReport) [][2]string {
+	if r.total == 0 {
+		return [][2]string{{"Total", "No tokens on this day."}}
+	}
+	line := human(r.total) + " tokens"
+	if r.median > 0 {
+		line += fmt.Sprintf(", %.1f× the median day (%s)", float64(r.total)/float64(r.median), human(r.median))
+	}
+	out := [][2]string{{"Total", line + "."}}
+	for i, s := range r.sessions {
+		label := ""
+		if i == 0 {
+			label = "Sessions"
+		}
+		out = append(out, [2]string{label, fmt.Sprintf("%3.0f%%  %s", 100*s.part, s.name)})
+	}
+	out = append(out, [2]string{"Context", fmt.Sprintf("calls sent a median of %s context tokens (range median %s).",
+		human(r.context), human(r.rangeContext))})
+	var cache []string
+	if r.idle > 0 {
+		cache = append(cache, fmt.Sprintf("%d rebuilds after more than 1 hour idle wrote %s tokens again", r.idle, human(r.idleTokens)))
+	}
+	if r.other > 0 && r.idle > 0 {
+		cache = append(cache, fmt.Sprintf("%d other misses wrote %s", r.other, human(r.otherTokens)))
+	} else if r.other > 0 {
+		cache = append(cache, fmt.Sprintf("%d cache misses wrote %s tokens again", r.other, human(r.otherTokens)))
+	}
+	if len(cache) > 0 {
+		out = append(out, [2]string{"Cache", strings.Join(cache, "; ") + "."})
+	}
+	if r.sub > 0 {
+		out = append(out, [2]string{"Subagents", fmt.Sprintf("%.0f%% of the day's tokens.", 100*r.sub)})
+	}
+	if o := r.heaviest; o != nil {
+		out = append(out, [2]string{"Outputs", fmt.Sprintf("%s %s added %s; %d later calls sent it again (%s).",
+			o.Name, clip(o.Detail, 40), human(o.Size), o.Reads, human(o.Rent()))})
+	}
+	var parts []string
+	for _, s := range r.models {
+		parts = append(parts, fmt.Sprintf("%s %.0f%%", s.name, 100*s.part))
+	}
+	return append(out, [2]string{"Models", strings.Join(parts, ", ") + "."})
 }
 
 func rentView(outputs []Output, w, rows int) []string {
@@ -293,10 +338,7 @@ func (m model) sessionsView(used []Usage, w, rows int) []string {
 	start := window(m.sel, listRows)
 	for i := start; i < min(len(list), start+listRows); i++ {
 		s := list[i]
-		name := m.titles[s.key]
-		if name == "" {
-			name = s.project
-		}
+		name := sessionName(m.titles, s.key, s.project)
 		c := claudeColor
 		if s.tool == Codex {
 			c = codexColor
@@ -311,10 +353,10 @@ func (m model) sessionsView(used []Usage, w, rows int) []string {
 func (m model) timelineView(used []Usage, outputs []Output, w, rows int) []string {
 	inner := w - 4
 	calls, events := timeline(m.session, used, outputs)
-	name := sessionName(m.session, m.titles, used)
 	if len(calls) == 0 {
-		return panel(short(name, inner-10), "", w, []string{color(dimColor, "This session has no calls for these filters.")})
+		return panel("Session", "", w, []string{color(dimColor, "This session has no calls for these filters.")})
 	}
+	name := sessionName(m.titles, m.session, calls[0].Project)
 	var tokens, peak int64
 	for _, u := range calls {
 		tokens += u.Total()
@@ -328,13 +370,12 @@ func (m model) timelineView(used []Usage, outputs []Output, w, rows int) []strin
 	cols := min(len(calls), plotW)
 	values := make([]int64, cols)
 	marks := make([]rune, cols)
-	rank := map[rune]int{markRebuild: 4, markCompaction: 3, markSubagent: 2, markOutput: 1}
 	col := func(call int) int { return call * cols / len(calls) }
 	for i, u := range calls {
 		values[col(i)] = max(values[col(i)], u.Context)
 	}
 	for _, e := range events {
-		if c := col(e.call); rank[e.mark] > rank[marks[c]] {
+		if c := col(e.call); markRank[e.mark] > markRank[marks[c]] {
 			marks[c] = e.mark
 		}
 	}
@@ -390,22 +431,42 @@ func (m model) timelineView(used []Usage, outputs []Output, w, rows int) []strin
 
 	// Keep the most important events, then show them in time order.
 	shown := append([]event(nil), events...)
-	sort.SliceStable(shown, func(i, j int) bool { return rank[shown[i].mark] > rank[shown[j].mark] })
+	sort.SliceStable(shown, func(i, j int) bool { return markRank[shown[i].mark] > markRank[shown[j].mark] })
 	shown = shown[:min(eventRows, len(shown))]
-	sort.SliceStable(shown, func(i, j int) bool { return shown[i].at.Before(shown[j].at) })
+	sort.SliceStable(shown, func(i, j int) bool { return shown[i].call < shown[j].call })
 	var ev []string
 	if len(events) == 0 {
 		ev = append(ev, color(dimColor, "No cache rebuilds, compactions, subagents, or large outputs."))
 	}
 	for _, e := range shown {
-		at := e.at.Format(layout)
-		ev = append(ev, color(dimColor, at)+"  "+color(markColors[e.mark], string(e.mark))+" "+short(e.text, inner-len(at)-4))
+		at := calls[e.call].Time.Format(layout)
+		ev = append(ev, color(dimColor, at)+"  "+color(markColors[e.mark], string(e.mark))+" "+short(eventText(e, calls), inner-len(at)-4))
 	}
 	right := fmt.Sprintf("%d calls · %s tokens", len(calls), human(tokens))
 	if len(events) > len(shown) {
 		right = fmt.Sprintf("%d of %d events · %s", len(shown), len(events), right)
 	}
 	return append(lines, panel("Events", color(dimColor, right), w, ev)...)
+}
+
+// eventText says what happened at an event of the timeline.
+func eventText(e event, calls []Usage) string {
+	u, o := calls[e.call], e.out
+	switch e.mark {
+	case markRebuild:
+		if u.Gap >= 5*time.Minute {
+			return fmt.Sprintf("cache rebuilt after %s without calls: %s tokens written again", duration(u.Gap), human(u.Miss))
+		}
+		return fmt.Sprintf("cache missed: %s tokens written again", human(u.Miss))
+	case markCompaction:
+		if e.call == 0 {
+			return "compaction: context down to " + human(u.Context)
+		}
+		return fmt.Sprintf("compaction: context %s → %s", human(calls[e.call-1].Context), human(u.Context))
+	case markSubagent:
+		return fmt.Sprintf("subagent result: %s added %s", clip(o.Detail, 50), human(o.Size))
+	}
+	return fmt.Sprintf("%s %s added %s; %d later calls sent it again", o.Name, clip(o.Detail, 50), human(o.Size), o.Reads)
 }
 
 func driftView(used []Usage, w, height int) []string {

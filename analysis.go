@@ -161,10 +161,28 @@ func dayTotals(usage []Usage, from, to time.Time) []dayTotal {
 	return days
 }
 
-// explainDay lists what drove the tokens of one day, as label and text
-// pairs. It compares the day with the median day of the range.
-func explainDay(d time.Time, days []dayTotal, usage []Usage, outputs []Output, titles map[string]string) [][2]string {
-	var total int64
+// share is a name and its part of a total.
+type share struct {
+	name string
+	part float64
+}
+
+// dayReport is what drove the tokens of one day.
+type dayReport struct {
+	total, median           int64   // tokens of the day and of the median day of the range
+	sessions                []share // the sessions that used the most
+	context, rangeContext   int64   // median context of a call on the day and in the range
+	idle, other             int     // cache misses after more than 1 hour idle, and the rest
+	idleTokens, otherTokens int64
+	sub                     float64 // part of the tokens that subagents used
+	heaviest                *Output // the output with the most rent, or nil
+	models                  []share
+}
+
+// explainDay says what drove the tokens of one day, next to the median day
+// of the range.
+func explainDay(d time.Time, days []dayTotal, usage []Usage, outputs []Output, titles map[string]string) dayReport {
+	var r dayReport
 	var dayUsage []Usage
 	var contexts, allContexts []int64
 	for _, u := range usage {
@@ -172,75 +190,50 @@ func explainDay(d time.Time, days []dayTotal, usage []Usage, outputs []Output, t
 		if day(u.Time).Equal(d) {
 			dayUsage = append(dayUsage, u)
 			contexts = append(contexts, u.Context)
-			total += u.Total()
+			r.total += u.Total()
 		}
 	}
-	if total == 0 {
-		return [][2]string{{"Total", "No tokens on this day."}}
+	if r.total == 0 {
+		return r
 	}
 	totals := make([]int64, len(days))
 	for i, t := range days {
 		totals[i] = t.tokens
 	}
-	line := human(total) + " tokens"
-	if med := median(totals); med > 0 {
-		line += fmt.Sprintf(", %.1f× the median day (%s)", float64(total)/float64(med), human(med))
-	}
-	out := [][2]string{{"Total", line + "."}}
+	r.median, r.context, r.rangeContext = median(totals), median(contexts), median(allContexts)
 
-	sessions := map[string]int64{}
-	models := map[string]int64{}
-	var idleN, otherN int
-	var idleTokens, otherTokens, subTokens int64
+	sessions, models, projects := map[string]int64{}, map[string]int64{}, map[string]string{}
+	var subTokens int64
 	for _, u := range dayUsage {
 		sessions[u.Session] += u.Total()
+		projects[u.Session] = u.Project
 		models[u.Model] += u.Total()
 		if u.Sub {
 			subTokens += u.Total()
 		}
 		switch {
 		case u.Miss > 0 && u.Gap > time.Hour:
-			idleN++
-			idleTokens += u.Miss
+			r.idle++
+			r.idleTokens += u.Miss
 		case u.Miss > 0:
-			otherN++
-			otherTokens += u.Miss
+			r.other++
+			r.otherTokens += u.Miss
 		}
 	}
-	for i, s := range topKeys(sessions, 3) {
-		label := ""
-		if i == 0 {
-			label = "Sessions"
-		}
-		out = append(out, [2]string{label, fmt.Sprintf("%3.0f%%  %s", 100*float64(sessions[s])/float64(total), sessionName(s, titles, usage))})
+	part := func(n int64) float64 { return float64(n) / float64(r.total) }
+	for _, s := range topKeys(sessions, 3) {
+		r.sessions = append(r.sessions, share{sessionName(titles, s, projects[s]), part(sessions[s])})
 	}
-	out = append(out, [2]string{"Context", fmt.Sprintf("calls sent a median of %s context tokens (range median %s).",
-		human(median(contexts)), human(median(allContexts)))})
-	if idleN+otherN > 0 {
-		text := fmt.Sprintf("%d rebuilds after more than 1 hour idle wrote %s tokens again", idleN, human(idleTokens))
-		if otherN > 0 {
-			text += fmt.Sprintf("; %d other misses wrote %s", otherN, human(otherTokens))
-		}
-		out = append(out, [2]string{"Cache", text + "."})
-	}
-	if subTokens > 0 {
-		out = append(out, [2]string{"Subagents", fmt.Sprintf("%.0f%% of the day's tokens.", 100*float64(subTokens)/float64(total))})
-	}
-	var heaviest *Output
-	for i, o := range outputs {
-		if day(o.Time).Equal(d) && (heaviest == nil || o.Rent() > heaviest.Rent()) {
-			heaviest = &outputs[i]
-		}
-	}
-	if heaviest != nil && heaviest.Rent() > 0 {
-		out = append(out, [2]string{"Outputs", fmt.Sprintf("%s %s added %s; %d later calls sent it again (%s).",
-			heaviest.Name, clip(heaviest.Detail, 40), human(heaviest.Size), heaviest.Reads, human(heaviest.Rent()))})
-	}
-	var parts []string
 	for _, name := range topKeys(models, 3) {
-		parts = append(parts, fmt.Sprintf("%s %.0f%%", name, 100*float64(models[name])/float64(total)))
+		r.models = append(r.models, share{name, part(models[name])})
 	}
-	return append(out, [2]string{"Models", strings.Join(parts, ", ") + "."})
+	r.sub = part(subTokens)
+	for i, o := range outputs {
+		if day(o.Time).Equal(d) && o.Rent() > 0 && (r.heaviest == nil || o.Rent() > r.heaviest.Rent()) {
+			r.heaviest = &outputs[i]
+		}
+	}
+	return r
 }
 
 // topKeys returns the n keys with the largest values.
@@ -299,33 +292,31 @@ func sessions(usage []Usage) []sessionInfo {
 	return out
 }
 
-// sessionName is the title of a session, or its project and start day.
-func sessionName(key string, titles map[string]string, usage []Usage) string {
+// sessionName is the title of a session, or its project.
+func sessionName(titles map[string]string, key, project string) string {
 	if t := titles[key]; t != "" {
 		return t
 	}
-	for _, u := range usage {
-		if u.Session == key {
-			return u.Project + " · " + u.Time.Format("2 Jan")
-		}
-	}
-	return key
+	return project
 }
 
 type event struct {
-	at   time.Time
-	call int  // index of the call in the session
-	mark rune // ◆ cache rebuild, ▼ compaction, ◇ subagent, ● large output
-	text string
+	call int    // index of the call in the session
+	mark rune   // ◆ cache rebuild, ▼ compaction, ◇ subagent, ● large output
+	out  Output // the output of a subagent or a large output
 }
 
-// Marks of the timeline events, most important first.
+// Marks of the timeline events.
 const (
 	markRebuild    = '◆'
 	markCompaction = '▼'
 	markSubagent   = '◇'
 	markOutput     = '●'
 )
+
+// markRank orders the marks. When there is not room for all events, the
+// timeline keeps the marks with the higher rank.
+var markRank = map[rune]int{markRebuild: 4, markCompaction: 3, markSubagent: 2, markOutput: 1}
 
 // largeOutput is the size from which an output shows on the timeline.
 const largeOutput = 20_000
@@ -345,15 +336,10 @@ func timeline(key string, usage []Usage, outputs []Output) ([]Usage, []event) {
 	for i, u := range calls {
 		index[u.Time] = i
 		if u.Miss > 0 {
-			text := fmt.Sprintf("cache missed: %s tokens written again", human(u.Miss))
-			if u.Gap >= 5*time.Minute {
-				text = fmt.Sprintf("cache rebuilt after %s without calls: %s tokens written again", duration(u.Gap), human(u.Miss))
-			}
-			events = append(events, event{u.Time, i, markRebuild, text})
+			events = append(events, event{call: i, mark: markRebuild})
 		}
 		if u.Compact {
-			events = append(events, event{u.Time, i, markCompaction,
-				fmt.Sprintf("compaction: context %s → %s", human(calls[i-1].Context), human(u.Context))})
+			events = append(events, event{call: i, mark: markCompaction})
 		}
 	}
 	for _, o := range outputs {
@@ -363,13 +349,12 @@ func timeline(key string, usage []Usage, outputs []Output) ([]Usage, []event) {
 		}
 		switch {
 		case o.Name == "Agent" || o.Name == "Task" || o.Name == "spawn_agent":
-			events = append(events, event{o.Time, i, markSubagent, fmt.Sprintf("subagent result: %s added %s", clip(o.Detail, 50), human(o.Size))})
+			events = append(events, event{i, markSubagent, o})
 		case o.Size >= largeOutput:
-			events = append(events, event{o.Time, i, markOutput,
-				fmt.Sprintf("%s %s added %s; %d later calls sent it again", o.Name, clip(o.Detail, 50), human(o.Size), o.Reads)})
+			events = append(events, event{i, markOutput, o})
 		}
 	}
-	sort.SliceStable(events, func(i, j int) bool { return events[i].at.Before(events[j].at) })
+	sort.SliceStable(events, func(i, j int) bool { return events[i].call < events[j].call })
 	return calls, events
 }
 

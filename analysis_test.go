@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -98,15 +99,15 @@ func TestTimelineEvents(t *testing.T) {
 	if len(calls) != 5 {
 		t.Fatalf("got %d calls, want 5", len(calls))
 	}
-	var marks string
+	var got []string
 	for _, e := range events {
-		marks += string(e.mark)
+		got = append(got, fmt.Sprintf("%c%d", e.mark, e.call))
 	}
-	if marks != "●◆▼◇" && marks != "●◆◇▼" {
-		t.Errorf("event marks %q, want output, rebuild, compaction, and subagent", marks)
+	if g := strings.Join(got, " "); g != "●1 ◆2 ▼3 ◇3" && g != "●1 ◆2 ◇3 ▼3" {
+		t.Errorf("events %q, want an output, a rebuild, a compaction, and a subagent", g)
 	}
-	if !strings.Contains(events[1].text, "after 2h59m") {
-		t.Errorf("rebuild text: %q", events[1].text)
+	if text := eventText(events[1], calls); !strings.Contains(text, "after 2h59m") {
+		t.Errorf("rebuild text: %q", text)
 	}
 }
 
@@ -120,15 +121,15 @@ func TestExplainDay(t *testing.T) {
 	}
 	outputs := []Output{{Time: d.Add(time.Hour), Name: "Bash", Detail: "make", Size: 10, Reads: 5}}
 	days := dayTotals(usage, d.AddDate(0, 0, -2), d)
-	text := ""
-	for _, kv := range explainDay(d, days, usage, outputs, map[string]string{"s1": "Fix the build"}) {
-		text += kv[0] + ": " + kv[1] + "\n"
+	r := explainDay(d, days, usage, outputs, map[string]string{"s1": "Fix the build"})
+	if r.total != 600 || r.median != 100 || r.context != 900 || r.rangeContext != 900 {
+		t.Errorf("total %d median %d context %d range context %d, want 600, 100, 900, 900", r.total, r.median, r.context, r.rangeContext)
 	}
-	for _, want := range []string{"600 tokens, 6.0× the median day (100)", "100%  Fix the build",
-		"1 rebuilds after more than 1 hour idle", "Subagents: 50%", "Bash make added 10; 5 later calls", "Models: m 100%"} {
-		if !strings.Contains(text, want) {
-			t.Errorf("explanation lacks %q:\n%s", want, text)
-		}
+	if fmt.Sprint(r.sessions) != "[{Fix the build 1}]" || fmt.Sprint(r.models) != "[{m 1}]" || r.sub != 0.5 {
+		t.Errorf("sessions %v models %v subagents %v", r.sessions, r.models, r.sub)
+	}
+	if r.idle != 1 || r.idleTokens != 6000 || r.other != 0 || r.heaviest == nil || r.heaviest.Name != "Bash" {
+		t.Errorf("idle %d (%d tokens) other %d heaviest %+v", r.idle, r.idleTokens, r.other, r.heaviest)
 	}
 }
 
