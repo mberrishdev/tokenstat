@@ -280,7 +280,8 @@ func TestAdvancedNavigation(t *testing.T) {
 	}
 
 	m = press(testModel(100, 40), "a", "down", "down", "down", "enter", "down", "enter")
-	want := sessions(m.used())[1].key
+	used, _ := m.used()
+	want := sessions(used)[1].key
 	if m.screen != advTimeline || m.session != want {
 		t.Errorf("timeline: screen %v session %q, want the second session %q", m.screen, m.session, want)
 	}
@@ -293,12 +294,13 @@ func TestAdvancedNavigation(t *testing.T) {
 	for range 100 {
 		m = press(m, "down")
 	}
-	if n := len(sessions(m.used())); m.sel != n-1 {
+	if n := m.listLen(); m.sel != n-1 {
 		t.Errorf("down past the end: sel %d, want %d", m.sel, n-1)
 	}
 
 	m = press(testModel(100, 40), "a", "down", "enter")
-	days := dayTotals(m.used(), m.f.from, m.f.to)
+	used, _ = m.used()
+	days := dayTotals(used, m.f.from, m.f.to)
 	for _, d := range days {
 		if d.tokens > days[m.sel].tokens {
 			t.Errorf("spike explainer opened on %v, not on the biggest day %v", days[m.sel].day, d.day)

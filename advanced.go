@@ -42,16 +42,6 @@ const (
 
 var markColors = map[rune]int{markRebuild: rebuildColor, markCompaction: compactionColor, markSubagent: subagentColor, markOutput: outputColor}
 
-func (m model) usedOutputs() []Output {
-	var out []Output
-	for _, o := range m.outputs {
-		if m.f.keepAt(o.Time, o.Tool, o.Project, o.Model) {
-			out = append(out, o)
-		}
-	}
-	return out
-}
-
 // listLen is the number of rows that the up and down keys move through.
 func (m model) listLen() int {
 	switch m.screen {
@@ -60,7 +50,8 @@ func (m model) listLen() int {
 	case advSpikes:
 		return dayCount(m.f.from, m.f.to)
 	case advSessions:
-		return len(sessions(m.used()))
+		used, _ := m.used()
+		return len(sessions(used))
 	}
 	return 0
 }
@@ -72,7 +63,8 @@ func (m *model) open() {
 	case advMenu:
 		m.screen, m.sel = menu[m.sel].screen, 0
 		if m.screen == advSpikes {
-			days := dayTotals(m.used(), m.f.from, m.f.to)
+			used, _ := m.used()
+			days := dayTotals(used, m.f.from, m.f.to)
 			for i, d := range days {
 				if d.tokens > days[m.sel].tokens {
 					m.sel = i
@@ -80,7 +72,8 @@ func (m *model) open() {
 			}
 		}
 	case advSessions:
-		if list := sessions(m.used()); m.sel < len(list) {
+		used, _ := m.used()
+		if list := sessions(used); m.sel < len(list) {
 			m.session, m.screen = list[m.sel].key, advTimeline
 		}
 	}
@@ -113,20 +106,20 @@ func marker(selected bool, row string) string {
 	return "  " + row
 }
 
-func (m model) advancedView(used []Usage, w, rows int) []string {
+func (m model) advancedView(used []Usage, outputs []Output, w, rows int) []string {
 	switch m.screen {
 	case advMenu:
 		return m.menuView(w)
 	case advLimits:
 		return m.limitsView(used, w, rows)
 	case advSpikes:
-		return m.spikesView(used, w, rows)
+		return m.spikesView(used, outputs, w, rows)
 	case advRent:
-		return rentView(m.usedOutputs(), w, rows)
+		return rentView(outputs, w, rows)
 	case advSessions:
 		return m.sessionsView(used, w, rows)
 	case advTimeline:
-		return m.timelineView(used, w, rows)
+		return m.timelineView(used, outputs, w, rows)
 	case advDrift:
 		return driftView(used, w, rows)
 	}
@@ -145,6 +138,7 @@ func (m model) menuView(w int) []string {
 func (m model) limitsView(used []Usage, w, rows int) []string {
 	inner := w - 4
 	var now []string
+	// The limit is for the whole account, so this panel ignores the filters.
 	if u, ok := latestLimit(m.usage); ok {
 		l := u.Limit
 		line := fmt.Sprintf("Plan %s · weekly %.0f%% used, resets %s", l.Plan, l.Week, l.WeekReset.Local().Format("Mon 2 Jan 15:04"))
@@ -207,7 +201,7 @@ func (m model) limitsView(used []Usage, w, rows int) []string {
 	return append(lines, panel("Tokens per 1% of the weekly limit", color(dimColor, "a jump means the limit changed"), w, per)...)
 }
 
-func (m model) spikesView(used []Usage, w, rows int) []string {
+func (m model) spikesView(used []Usage, outputs []Output, w, rows int) []string {
 	inner := w - 4
 	days := dayTotals(used, m.f.from, m.f.to)
 	totals := make([]int64, len(days))
@@ -235,7 +229,7 @@ func (m model) spikesView(used []Usage, w, rows int) []string {
 	lines := panel("Days", color(dimColor, "↑↓ picks a day · × is the share of the median day"), w, list)
 
 	var why []string
-	for _, kv := range explainDay(days[sel].day, days, used, m.usedOutputs(), m.titles) {
+	for _, kv := range explainDay(days[sel].day, days, used, outputs, m.titles) {
 		why = append(why, color(dimColor, padRight(kv[0], 11))+short(kv[1], inner-11))
 	}
 	why = why[:min(len(why), max(1, rows-len(lines)-2))]
@@ -309,9 +303,9 @@ func (m model) sessionsView(used []Usage, w, rows int) []string {
 	return panel("Sessions", color(dimColor, fmt.Sprintf("%d sessions · enter opens the timeline", len(list))), w, lines)
 }
 
-func (m model) timelineView(used []Usage, w, rows int) []string {
+func (m model) timelineView(used []Usage, outputs []Output, w, rows int) []string {
 	inner := w - 4
-	calls, events := timeline(m.session, used, m.usedOutputs())
+	calls, events := timeline(m.session, used, outputs)
 	name := sessionName(m.session, m.titles, used)
 	if len(calls) == 0 {
 		return panel(short(name, inner-10), "", w, []string{color(dimColor, "This session has no calls for these filters.")})

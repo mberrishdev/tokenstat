@@ -169,7 +169,7 @@ func (m model) View() string {
 			minWidth, minHeight, m.width, m.height)
 	}
 	w := min(m.width, maxWidth)
-	used := m.used()
+	used, outputs := m.used()
 	lines := m.summary(used, w)
 	rows := m.height - len(lines) - 1
 	switch {
@@ -178,7 +178,7 @@ func (m model) View() string {
 	case m.screen == dashboard:
 		lines = append(lines, m.panels(used, w, rows)...)
 	default:
-		lines = append(lines, m.advancedView(used, w, rows)...)
+		lines = append(lines, m.advancedView(used, outputs, w, rows)...)
 	}
 	lines = lines[:min(len(lines), m.height-1)]
 	for len(lines) < m.height-1 {

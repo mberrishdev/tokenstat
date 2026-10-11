@@ -59,14 +59,21 @@ type model struct {
 	session       string // session that the timeline shows
 }
 
-func (m model) used() []Usage {
-	var out []Usage
+// used returns the usage and the tool outputs that the filters keep.
+func (m model) used() ([]Usage, []Output) {
+	var usage []Usage
 	for _, u := range m.usage {
 		if m.f.keep(u) {
-			out = append(out, u)
+			usage = append(usage, u)
 		}
 	}
-	return out
+	var outputs []Output
+	for _, o := range m.outputs {
+		if m.f.keepAt(o.Time, o.Tool, o.Project, o.Model) {
+			outputs = append(outputs, o)
+		}
+	}
+	return usage, outputs
 }
 
 type loadedMsg data
