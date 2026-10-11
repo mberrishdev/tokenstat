@@ -75,16 +75,24 @@ func load() data {
 	d.usage = append(dedupe(recs[Claude]), dedupe(recs[Codex])...)
 	for i := range d.usage {
 		d.usage[i].Time = d.usage[i].Time.Local()
-		d.usage[i].Project = strings.Replace(d.usage[i].Project, home, "~", 1)
+		d.usage[i].Project = tilde(d.usage[i].Project, home)
 	}
 	d.outputs = dedupeOutputs(outputs)
 	for i := range d.outputs {
 		d.outputs[i].Time = d.outputs[i].Time.Local()
-		d.outputs[i].Project = strings.Replace(d.outputs[i].Project, home, "~", 1)
+		d.outputs[i].Project = tilde(d.outputs[i].Project, home)
 		d.outputs[i].Detail = strings.ReplaceAll(d.outputs[i].Detail, home, "~")
 	}
 	setLimitPoints(d.usage)
 	return d
+}
+
+// tilde writes a path in the home folder as ~/...
+func tilde(path, home string) string {
+	if rest, ok := strings.CutPrefix(path, home); ok && home != "" && (rest == "" || rest[0] == '/') {
+		return "~" + rest
+	}
+	return path
 }
 
 // codexTitles reads the thread names that Codex keeps for its sessions.

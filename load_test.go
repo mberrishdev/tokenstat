@@ -67,14 +67,15 @@ func TestLoadCountsEachClaudeResponseOnce(t *testing.T) {
 			claudeResponse("01T10:00:03", "$HOME/code/app", "msg_1", 40) +
 			`{"type":"assistant","timestamp":"2026-10-01T10:00:04Z","cwd":"/p","requestId":"req_2","message":{"id":"msg_2"}}` + "\n",
 		".claude/projects/-app/b.jsonl":      claudeResponse("02T09:00:00", "$HOME/code/app", "msg_1", 5),
+		".claude/projects/-other/c.jsonl":    claudeResponse("02T09:00:00", "$HOME-other/x", "msg_3", 5),
 		".claude/projects/-app/locked.jsonl": claudeResponse("02T09:00:00", "/locked", "msg_4", 5),
 	})
 	if err := os.Chmod(filepath.Join(home, ".claude/projects/-app/locked.jsonl"), 0); err != nil {
 		t.Fatal(err)
 	}
 	d := load()
-	if len(d.usage) != 1 || d.failed != 1 {
-		t.Fatalf("got %d calls and %d unreadable files, want 1 and 1", len(d.usage), d.failed)
+	if len(d.usage) != 2 || d.failed != 1 {
+		t.Fatalf("got %d calls and %d unreadable files, want 2 and 1", len(d.usage), d.failed)
 	}
 	byProject := map[string]Usage{}
 	for _, u := range d.usage {
@@ -89,6 +90,9 @@ func TestLoadCountsEachClaudeResponseOnce(t *testing.T) {
 	}
 	if want := time.Date(2026, 10, 1, 10, 0, 1, 0, time.UTC); !u.Time.Equal(want) || u.Time.Location() != time.Local {
 		t.Errorf("time %v, want %v in local time", u.Time, want)
+	}
+	if _, ok := byProject[home+"-other/x"]; !ok {
+		t.Errorf("a folder next to the home folder became %v", byProject)
 	}
 }
 
