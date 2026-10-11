@@ -380,13 +380,14 @@ func codexDetail(raw json.RawMessage) string {
 // Each token_count event carries the usage of the last call. Codex sometimes
 // repeats an event, and a forked or sub-agent session copies its parent's
 // events with new timestamps and, in some versions, new session totals. So the
-// usage of the call is the key that finds copies. The model comes from the
-// turn_context line that starts each turn.
+// usage of the call and the plan limits after it are the key that finds
+// copies. A call of another session with the same usage usually has other
+// limits. The model comes from the turn_context line that starts each turn.
 func parseCodex(path string, r io.Reader) (fileData, error) {
 	var fd fileData
 	var calls []*call
 	var pending []toolUse
-	project, model, version, lastKey := "", "", "", ""
+	project, model, version, lastUsage := "", "", "", ""
 	err := eachLine(r, func(line []byte) {
 		// The line and payload types come first, and the rest can be large.
 		head := line[:min(len(line), 300)]
@@ -424,33 +425,36 @@ func parseCodex(path string, r io.Reader) (fileData, error) {
 			pending = append(pending, toolUse{p.Name, codexDetail(p.Input)})
 		case l.Type == "event_msg" && p.Type == "token_count" && p.Info != nil && p.Info.Last.Total > 0:
 			last := p.Info.Last
-			key := fmt.Sprint(last)
-			if key == lastKey {
+			if fmt.Sprint(last) == lastUsage {
 				return // a repeated event
 			}
-			lastKey = key
-			c := &call{rec: record{key, Usage{
-				Tokens: Tokens{Input: last.Input - last.Cached, Output: last.Output, CacheRead: last.Cached},
-				Time:   l.Timestamp, Project: project, Tool: Codex, Model: model, Session: path,
-				Version: version, Sub: fd.sub, Context: last.Input,
-			}}, tools: pending}
-			pending = nil
+			lastUsage = fmt.Sprint(last)
+			key := lastUsage
+			var lim *Limit
 			if rl := p.RateLimits; rl != nil {
-				lim := &Limit{Plan: rl.PlanType}
+				lim = &Limit{Plan: rl.PlanType}
 				for _, w := range []*codexWindow{rl.Primary, rl.Secondary} {
-					switch {
-					case w == nil:
-					case w.WindowMinutes == 7*24*60:
+					if w == nil {
+						continue
+					}
+					key += fmt.Sprint(*w)
+					switch w.WindowMinutes {
+					case 7 * 24 * 60:
 						lim.Week, lim.WeekReset, lim.WeekResetBucket = w.UsedPercent, time.Unix(w.ResetsAt, 0), w.ResetsAt/3600
-					case w.WindowMinutes == 5*60:
+					case 5 * 60:
 						lim.Hours5, lim.Hours5Reset = w.UsedPercent, time.Unix(w.ResetsAt, 0)
 					}
 				}
-				if !lim.WeekReset.IsZero() {
-					c.rec.Limit = lim
+				if lim.WeekReset.IsZero() {
+					lim = nil
 				}
 			}
-			calls = append(calls, c)
+			calls = append(calls, &call{rec: record{key, Usage{
+				Tokens: Tokens{Input: last.Input - last.Cached, Output: last.Output, CacheRead: last.Cached},
+				Time:   l.Timestamp, Project: project, Tool: Codex, Model: model, Session: path,
+				Version: version, Sub: fd.sub, Context: last.Input, Limit: lim,
+			}}, tools: pending})
+			pending = nil
 		}
 	})
 	fd.records, fd.outputs = finish(calls)

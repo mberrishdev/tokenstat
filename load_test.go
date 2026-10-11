@@ -121,7 +121,7 @@ const reset1 = 1790400000
 
 func TestLoadCodexForksAndOtherSessions(t *testing.T) {
 	// The fork copies the parent's call with a new time, then makes a call
-	// of its own.
+	// of its own. Another session makes a call with the same usage later.
 	writeLogs(t, map[string]string{
 		".codex/sessions/2026/10/01/a.jsonl": codexLog("a", "/parent", "",
 			`{"timestamp":"2026-10-01T10:00:05Z","type":"event_msg","payload":{"type":"token_count","info":null}}`+"\n",
@@ -130,14 +130,16 @@ func TestLoadCodexForksAndOtherSessions(t *testing.T) {
 		".codex/sessions/2026/10/01/b.jsonl": codexLog("b", "/child", "",
 			codexCall("12:00:00", 1000, 800, 10, reset1),
 			codexCall("12:00:30", 500, 400, 12, reset1)),
+		".codex/sessions/2026/10/01/c.jsonl": codexLog("c", "/other", "",
+			codexCall("15:00:00", 1000, 800, 30, reset1)),
 	})
 	d := load()
 	byProject := map[string]Usage{}
 	for _, u := range d.usage {
 		byProject[u.Project] = u
 	}
-	if len(d.usage) != 2 || len(byProject) != 2 {
-		t.Fatalf("got %d calls in %v, want one each in /parent and /child", len(d.usage), byProject)
+	if len(d.usage) != 3 || len(byProject) != 3 {
+		t.Fatalf("got %d calls in %v, want one each in /parent, /child, and /other", len(d.usage), byProject)
 	}
 	p := byProject["/parent"]
 	if p.Total() != 1050 || p.Input != 200 || p.CacheRead != 800 || p.Output != 50 {
