@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -30,13 +32,38 @@ type credentials struct {
 	Login  string `json:"login"`
 }
 
-func credentialsPath() string {
+func configDir() string {
 	dir := os.Getenv("XDG_CONFIG_HOME")
 	if dir == "" {
 		home, _ := os.UserHomeDir()
 		dir = filepath.Join(home, ".config")
 	}
-	return filepath.Join(dir, "tokenstat", "leaderboard.json")
+	return filepath.Join(dir, "tokenstat")
+}
+
+func credentialsPath() string { return filepath.Join(configDir(), "leaderboard.json") }
+
+// deviceID returns the random id of this machine, and makes one the first
+// time. The leaderboard keeps the rows of each machine apart and adds them
+// up, so two laptops on one account both count. The id lives apart from the
+// login: a new login on the same machine must not look like a new machine,
+// or its days would count twice.
+func deviceID() (string, error) {
+	path := filepath.Join(configDir(), "device")
+	if b, err := os.ReadFile(path); err == nil {
+		if id := strings.TrimSpace(string(b)); id != "" {
+			return id, nil
+		}
+	}
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	id := hex.EncodeToString(b)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return "", err
+	}
+	return id, os.WriteFile(path, []byte(id+"\n"), 0o600)
 }
 
 func readCredentials() (credentials, error) {
@@ -253,10 +280,15 @@ func cmdSubmit(args []string) error {
 	since := time.Date(now.Year(), now.Month(), now.Day()-(*days-1), 0, 0, 0, 0, time.Local)
 	rows := dailyTotals(d.usage, since)
 
+	device, err := deviceID()
+	if err != nil {
+		return fmt.Errorf("device id: %w", err)
+	}
+	body := map[string]any{"device": device, "days": rows}
 	if *dry {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		return enc.Encode(map[string]any{"days": rows})
+		return enc.Encode(body)
 	}
 	if len(rows) == 0 {
 		fmt.Println("No usage in the logs to send.")
@@ -266,7 +298,6 @@ func cmdSubmit(args []string) error {
 		Accepted int    `json:"accepted"`
 		Profile  string `json:"profile"`
 	}
-	body := map[string]any{"days": rows}
 	if err := postJSON(server(*srvFlag, creds.Server)+"/api/submit", creds.Token, body, &res); err != nil {
 		return fmt.Errorf("submit: %w", err)
 	}
