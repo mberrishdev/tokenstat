@@ -95,6 +95,7 @@ Run `tokenstat`.
 - `p` picks a project. Type to search, use ↑↓ to move, and Enter to select.
 - `m` picks a model the same way.
 - `a` opens the advanced views. Use ↑↓ and Enter to open one, and Esc to go back.
+- `s` sends your daily totals to the leaderboard, like `tokenstat submit`. If you are not logged in, it starts the GitHub login first and shows the code to enter. The top line shows the account you are logged in as.
 - `r` resets the filters. `q` quits.
 
 Set `NO_COLOR=1` to turn off colors.
@@ -108,7 +109,7 @@ tokenstat login    # sign in with GitHub
 tokenstat submit   # send daily totals
 ```
 
-`submit` sends one row per day, tool, and model: the token counts and the number of calls. It does not send projects, paths, sessions, commands, or titles. Run `tokenstat submit -dry-run` to see the rows first. `tokenstat logout` forgets the login. Set `TOKENSTAT_SERVER` to use another leaderboard.
+If you are not logged in, `submit` runs the login first. It sends one row per day, tool, and model: the token counts and the number of calls. It does not send projects, paths, sessions, commands, or titles. Run `tokenstat submit -dry-run` to see the rows first. `tokenstat logout` forgets the login. Set `TOKENSTAT_SERVER` to use another leaderboard.
 
 ## How it counts
 

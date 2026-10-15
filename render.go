@@ -5,6 +5,7 @@ import (
 	"math"
 	"os"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -47,6 +48,7 @@ func padLeft(s string, w int) string  { return strings.Repeat(" ", max(0, w-widt
 // shortPath drops leading folders until the path fits in w cells. It cuts
 // the last folder name only if that is not enough.
 func shortPath(p string, w int) string {
+	w = max(w, 1)
 	parts := strings.Split(p, "/")
 	for i := 1; utf8.RuneCountInString(p) > w && i < len(parts); i++ {
 		p = "…/" + strings.Join(parts[i:], "/")
@@ -265,7 +267,26 @@ func (m model) filterLine(inner int) string {
 	if m.failed > 0 {
 		note = color(errColor, fmt.Sprintf("   %d files could not be read", m.failed))
 	}
-	project := "All"
+	// The leaderboard account goes last, in the space the filters leave:
+	// in full, shorter, or not at all. The project keeps room for 12 cells.
+	project, projectW := "All", 3
+	if m.f.project != "" {
+		projectW = min(width(m.f.project), 12)
+	}
+	account := []string{
+		color(dimColor, "   Leaderboard ") + "github.com/" + m.login,
+		color(dimColor, "   ") + "github.com/" + m.login,
+		"",
+	}
+	if m.login == "" {
+		account = []string{color(dimColor, "   Leaderboard not logged in"), color(dimColor, "   not logged in"), ""}
+	}
+	for _, a := range account {
+		if width(head)+projectW+width(note)+width(a) <= inner || a == "" {
+			note += a
+			break
+		}
+	}
 	if m.f.project != "" {
 		project = bold(shortPath(m.f.project, inner-width(head)-width(note)))
 	}
@@ -412,7 +433,14 @@ func (m model) footer() string {
 		}
 		return " " + bold("Range ") + m.input + "▏" + hint
 	}
-	keys := [][2]string{{"d", "range"}, {"c", "custom"}, {"t", "tool"}, {"p", "project"}, {"m", "model"}, {"a", "advanced"}, {"r", "reset"}, {"q", "quit"}}
+	if m.status != "" && m.mode == browsing {
+		c := dimColor
+		if m.statusErr {
+			c = errColor
+		}
+		return " " + color(c, short(m.status, max(m.width-2, 10)))
+	}
+	keys := [][2]string{{"d", "range"}, {"c", "custom"}, {"t", "tool"}, {"p", "project"}, {"m", "model"}, {"a", "advanced"}, {"s", "submit to leaderboard"}, {"r", "reset"}, {"q", "quit"}}
 	switch {
 	case m.mode != browsing:
 		keys = [][2]string{{"type", "to search"}, {"↑↓", "move"}, {"enter", "select"}, {"esc", "cancel"}}
@@ -423,5 +451,22 @@ func (m model) footer() string {
 	for _, k := range keys {
 		parts = append(parts, bold(k[0])+" "+color(dimColor, k[1]))
 	}
-	return " " + strings.Join(parts, "  ")
+	line := " " + strings.Join(parts, "  ")
+	// Too wide: shorten the s key, which is the newest, then drop it.
+	for _, label := range []string{"submit", ""} {
+		if m.width == 0 || width(line) <= m.width {
+			break
+		}
+		i := slices.IndexFunc(parts, func(p string) bool { return strings.HasPrefix(p, bold("s")+" ") })
+		if i < 0 {
+			break
+		}
+		if label == "" {
+			parts = slices.Delete(parts, i, i+1)
+		} else {
+			parts[i] = bold("s") + " " + color(dimColor, label)
+		}
+		line = " " + strings.Join(parts, "  ")
+	}
+	return line
 }

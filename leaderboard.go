@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"cmp"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -9,6 +11,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/url"
 	"os"
@@ -48,29 +51,49 @@ func credentialsPath() string { return filepath.Join(configDir(), "leaderboard.j
 // up, so two laptops on one account both count. The id lives apart from the
 // login: a new login on the same machine must not look like a new machine,
 // or its days would count twice.
+//
+// Two processes can make the id at once, such as the dashboard and
+// `tokenstat submit`. Only the one that creates the file writes it; the
+// other reads what it wrote.
 func deviceID() (string, error) {
 	path := filepath.Join(configDir(), "device")
-	if b, err := os.ReadFile(path); err == nil {
-		if id := strings.TrimSpace(string(b)); id != "" {
-			return id, nil
+	for range 50 {
+		if b, err := os.ReadFile(path); err == nil {
+			if id := strings.TrimSpace(string(b)); id != "" {
+				return id, nil
+			}
+			time.Sleep(20 * time.Millisecond) // created, not written yet
+			continue
 		}
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			return "", err
+		}
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if errors.Is(err, fs.ErrExist) {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		b := make([]byte, 16)
+		rand.Read(b) // never fails
+		id := hex.EncodeToString(b)
+		_, werr := f.WriteString(id + "\n")
+		if cerr := f.Close(); werr == nil {
+			werr = cerr
+		}
+		return id, werr
 	}
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	id := hex.EncodeToString(b)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return "", err
-	}
-	return id, os.WriteFile(path, []byte(id+"\n"), 0o600)
+	return "", fmt.Errorf("%s stays empty", path)
 }
+
+var errNotLoggedIn = errors.New("not logged in: run `tokenstat login` first")
 
 func readCredentials() (credentials, error) {
 	var c credentials
 	b, err := os.ReadFile(credentialsPath())
 	if errors.Is(err, os.ErrNotExist) {
-		return c, errors.New("not logged in: run `tokenstat login` first")
+		return c, errNotLoggedIn
 	}
 	if err != nil {
 		return c, err
@@ -129,49 +152,88 @@ func cmdLogin(args []string) error {
 	fs := flag.NewFlagSet("login", flag.ExitOnError)
 	srvFlag := fs.String("server", "", "leaderboard address")
 	fs.Parse(args)
-	saved, _ := readCredentials()
-	srv := server(*srvFlag, saved.Server)
+	login, err := loginInTerminal(*srvFlag)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Logged in as %s. Run `tokenstat submit` to send your totals.\n", login)
+	return nil
+}
 
+// loginInTerminal runs the GitHub device flow with prompts on stdout.
+func loginInTerminal(srvFlag string) (string, error) {
+	code, err := startLogin(srvFlag)
+	if err != nil {
+		return "", err
+	}
+	fmt.Printf("Open %s and enter the code %s\n", code.VerificationURI, code.UserCode)
+	fmt.Println("Waiting for GitHub…")
+	return finishLogin(context.Background(), code)
+}
+
+// deviceCode is a started GitHub device flow: the code to enter on GitHub,
+// and what finishLogin needs to wait for it.
+type deviceCode struct {
+	DeviceCode       string `json:"device_code"`
+	UserCode         string `json:"user_code"`
+	VerificationURI  string `json:"verification_uri"`
+	ExpiresIn        int    `json:"expires_in"`
+	Interval         int    `json:"interval"`
+	Error            string `json:"error"` // GitHub answers 200 with an error, such as device_flow_disabled
+	ErrorDescription string `json:"error_description"`
+	server, clientID string
+}
+
+// startLogin asks the leaderboard for its GitHub app and GitHub for a code.
+func startLogin(srvFlag string) (deviceCode, error) {
+	saved, _ := readCredentials()
+	srv := server(srvFlag, saved.Server)
 	var cfg struct {
 		ClientID string `json:"githubClientId"`
 	}
 	if err := getJSON(srv+"/api/config", &cfg); err != nil {
-		return fmt.Errorf("read leaderboard config from %s: %w (set TOKENSTAT_SERVER or -server to your leaderboard)", srv, err)
+		return deviceCode{}, fmt.Errorf("read leaderboard config from %s: %w (set TOKENSTAT_SERVER or -server to your leaderboard)", srv, err)
 	}
-
-	var code struct {
-		DeviceCode      string `json:"device_code"`
-		UserCode        string `json:"user_code"`
-		VerificationURI string `json:"verification_uri"`
-		ExpiresIn       int    `json:"expires_in"`
-		Interval        int    `json:"interval"`
-	}
+	var code deviceCode
 	if err := postForm("https://github.com/login/device/code", url.Values{"client_id": {cfg.ClientID}}, &code); err != nil {
-		return fmt.Errorf("start GitHub login: %w", err)
+		return deviceCode{}, fmt.Errorf("start GitHub login: %w", err)
 	}
-	fmt.Printf("Open %s and enter the code %s\n", code.VerificationURI, code.UserCode)
-	fmt.Println("Waiting for GitHub…")
+	if code.Error != "" || code.DeviceCode == "" {
+		why := cmp.Or(code.ErrorDescription, code.Error, "no device code in the reply")
+		return deviceCode{}, fmt.Errorf("start GitHub login: %s (the leaderboard's GitHub app needs \"Enable Device Flow\")", why)
+	}
+	code.server, code.clientID = srv, cfg.ClientID
+	return code, nil
+}
 
+// finishLogin waits until the code is entered on GitHub, then trades the
+// GitHub token for a leaderboard token and saves it. The GitHub token is
+// not kept. It returns the GitHub login. Cancelling ctx stops the wait.
+func finishLogin(ctx context.Context, code deviceCode) (string, error) {
 	interval := time.Duration(max(code.Interval, 5)) * time.Second
 	deadline := time.Now().Add(time.Duration(code.ExpiresIn) * time.Second)
 	var ghToken string
 	for ghToken == "" {
 		if time.Now().After(deadline) {
-			return errors.New("the code expired; run `tokenstat login` again")
+			return "", errors.New("the GitHub code expired; try again")
 		}
-		time.Sleep(interval)
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(interval):
+		}
 		var tok struct {
 			AccessToken string `json:"access_token"`
 			Error       string `json:"error"`
 			Interval    int    `json:"interval"`
 		}
 		err := postForm("https://github.com/login/oauth/access_token", url.Values{
-			"client_id":   {cfg.ClientID},
+			"client_id":   {code.clientID},
 			"device_code": {code.DeviceCode},
 			"grant_type":  {"urn:ietf:params:oauth:grant-type:device_code"},
 		}, &tok)
 		if err != nil {
-			return fmt.Errorf("GitHub login: %w", err)
+			return "", fmt.Errorf("GitHub login: %w", err)
 		}
 		switch tok.Error {
 		case "":
@@ -180,9 +242,9 @@ func cmdLogin(args []string) error {
 		case "slow_down":
 			interval = time.Duration(max(tok.Interval, int(interval/time.Second)+5)) * time.Second
 		case "access_denied":
-			return errors.New("login was cancelled on GitHub")
+			return "", errors.New("login was cancelled on GitHub")
 		default:
-			return fmt.Errorf("GitHub login: %s", tok.Error)
+			return "", fmt.Errorf("GitHub login: %s", tok.Error)
 		}
 	}
 
@@ -190,14 +252,13 @@ func cmdLogin(args []string) error {
 		Token string `json:"token"`
 		Login string `json:"login"`
 	}
-	if err := postJSON(srv+"/api/auth/github", "", map[string]string{"githubToken": ghToken}, &res); err != nil {
-		return fmt.Errorf("sign in to the leaderboard: %w", err)
+	if err := postJSON(code.server+"/api/auth/github", "", map[string]string{"githubToken": ghToken}, &res); err != nil {
+		return "", fmt.Errorf("sign in to the leaderboard: %w", err)
 	}
-	if err := writeCredentials(credentials{Server: srv, Token: res.Token, Login: res.Login}); err != nil {
-		return err
+	if err := writeCredentials(credentials{Server: code.server, Token: res.Token, Login: res.Login}); err != nil {
+		return "", err
 	}
-	fmt.Printf("Logged in as %s. Run `tokenstat submit` to send your totals.\n", res.Login)
-	return nil
+	return res.Login, nil
 }
 
 func cmdLogout() error {
@@ -264,48 +325,94 @@ func dailyTotals(usage []Usage, since time.Time) []boardRow {
 	return out
 }
 
+// defaultSubmitDays is how far back `tokenstat submit` and the s key send.
+const defaultSubmitDays = 90
+
 func cmdSubmit(args []string) error {
 	fs := flag.NewFlagSet("submit", flag.ExitOnError)
-	days := fs.Int("days", 90, "send the last `n` days")
+	days := fs.Int("days", defaultSubmitDays, "send the last `n` days")
 	dry := fs.Bool("dry-run", false, "print the rows instead of sending them")
 	srvFlag := fs.String("server", "", "leaderboard address")
 	fs.Parse(args)
 
-	creds, err := readCredentials()
-	if err != nil && !*dry {
-		return err
-	}
-	d := load()
-	now := time.Now()
-	since := time.Date(now.Year(), now.Month(), now.Day()-(*days-1), 0, 0, 0, 0, time.Local)
-	rows := dailyTotals(d.usage, since)
-
-	device, err := deviceID()
-	if err != nil {
-		return fmt.Errorf("device id: %w", err)
-	}
-	body := map[string]any{"device": device, "days": rows}
+	usage := load().usage
 	if *dry {
+		body, err := submitBody(usage, *days)
+		if err != nil {
+			return err
+		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(body)
 	}
-	if len(rows) == 0 {
-		fmt.Println("No usage in the logs to send.")
-		return nil
+	msg, err := submit(usage, *days, *srvFlag)
+	if errors.Is(err, errNotLoggedIn) {
+		fmt.Println("Not logged in. Logging in with GitHub first.")
+		login, loginErr := loginInTerminal(*srvFlag)
+		if loginErr != nil {
+			return loginErr
+		}
+		fmt.Printf("Logged in as %s.\n", login)
+		msg, err = submit(usage, *days, *srvFlag) // err, not a new one: the retry's result is what counts
+	}
+	if err != nil {
+		return err
+	}
+	fmt.Println(msg)
+	return nil
+}
+
+// submitPayload is what a submit sends: this machine's id and the daily
+// totals.
+type submitPayload struct {
+	Device string     `json:"device"`
+	Days   []boardRow `json:"days"`
+}
+
+func submitBody(usage []Usage, days int) (submitPayload, error) {
+	now := time.Now()
+	since := time.Date(now.Year(), now.Month(), now.Day()-(days-1), 0, 0, 0, 0, time.Local)
+	device, err := deviceID()
+	if err != nil {
+		return submitPayload{}, fmt.Errorf("device id: %w", err)
+	}
+	return submitPayload{device, dailyTotals(usage, since)}, nil
+}
+
+// submit sends the daily totals of the last days days to the leaderboard
+// and returns a line that says what was sent. The dashboard's s key and
+// `tokenstat submit` both use it. It returns an error that wraps
+// errNotLoggedIn when there is no login or the server no longer takes it,
+// so the caller can log in and try again.
+func submit(usage []Usage, days int, srvFlag string) (string, error) {
+	creds, err := readCredentials()
+	if err != nil {
+		return "", err
+	}
+	body, err := submitBody(usage, days)
+	if err != nil {
+		return "", err
+	}
+	if len(body.Days) == 0 {
+		return "No usage in the logs to send.", nil
 	}
 	var res struct {
 		Accepted int    `json:"accepted"`
 		Profile  string `json:"profile"`
 	}
-	if err := postJSON(server(*srvFlag, creds.Server)+"/api/submit", creds.Token, body, &res); err != nil {
-		return fmt.Errorf("submit: %w", err)
+	err = postJSON(server(srvFlag, creds.Server)+"/api/submit", creds.Token, body, &res)
+	if he := (*httpError)(nil); errors.As(err, &he) && he.status == http.StatusUnauthorized {
+		return "", fmt.Errorf("%w (the leaderboard did not accept the saved login of %s)", errNotLoggedIn, creds.Login)
 	}
-	fmt.Printf("Sent %d rows, %s to %s.\n", res.Accepted, rows[0].Day, rows[len(rows)-1].Day)
+	if err != nil {
+		return "", fmt.Errorf("submit: %w", err)
+	}
+	rows := body.Days
+	msg := fmt.Sprintf("Sent %d rows, %s to %s.", res.Accepted, rows[0].Day, rows[len(rows)-1].Day)
 	if res.Profile != "" {
-		fmt.Println("Your profile:", res.Profile)
+		msg += " Your profile: " + res.Profile
 	}
-	return nil
+	return msg, nil
 }
 
 func getJSON(u string, out any) error {
@@ -347,13 +454,27 @@ func do(req *http.Request, out any) error {
 		return err
 	}
 	if resp.StatusCode >= 300 {
-		var e struct {
+		e := &httpError{status: resp.StatusCode}
+		var body struct {
 			Error string `json:"error"`
 		}
-		if json.Unmarshal(b, &e) == nil && e.Error != "" {
-			return fmt.Errorf("%s (HTTP %d)", e.Error, resp.StatusCode)
+		if json.Unmarshal(b, &body) == nil {
+			e.msg = body.Error
 		}
-		return fmt.Errorf("HTTP %d", resp.StatusCode)
+		return e
 	}
 	return json.Unmarshal(b, out)
+}
+
+// httpError is a reply with an error status.
+type httpError struct {
+	status int
+	msg    string // the reply's "error" field, if any
+}
+
+func (e *httpError) Error() string {
+	if e.msg == "" {
+		return fmt.Sprintf("HTTP %d", e.status)
+	}
+	return fmt.Sprintf("%s (HTTP %d)", e.msg, e.status)
 }

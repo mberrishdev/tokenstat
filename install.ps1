@@ -45,6 +45,20 @@ try {
 	New-Item -ItemType Directory -Path $dir -Force | Out-Null
 	Copy-Item "$tmp\out\tokenstat.exe" "$dir\tokenstat.exe" -Force
 	Write-Host "Installed tokenstat to $dir\tokenstat.exe"
+
+	# Now that the new one is in place, remove other copies on the PATH:
+	# one that comes first would run instead.
+	$target = [IO.Path]::GetFullPath("$dir\tokenstat.exe")
+	foreach ($other in Get-Command tokenstat -All -CommandType Application -ErrorAction SilentlyContinue) {
+		$path = [IO.Path]::GetFullPath($other.Source)
+		if ($path -eq $target) { continue }
+		try {
+			Remove-Item $path -Force
+			Write-Host "Removed another tokenstat: $path"
+		} catch {
+			Write-Warning "Could not remove another tokenstat: $path. It may run instead of this one. Remove it from an administrator PowerShell."
+		}
+	}
 } finally {
 	Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
 }
@@ -56,4 +70,5 @@ if (($userPath -split ';') -notcontains $dir) {
 	$env:Path = "$env:Path;$dir"
 	Write-Host "Added $dir to your PATH. Open a new terminal if tokenstat is not found."
 }
+
 Write-Host "Run: tokenstat"
