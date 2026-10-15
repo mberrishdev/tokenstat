@@ -266,7 +266,7 @@ func cmdSubmit(args []string) error {
 		Accepted int    `json:"accepted"`
 		Profile  string `json:"profile"`
 	}
-	body := map[string]any{"days": rows, "timezone": now.Format("-07:00")}
+	body := map[string]any{"days": rows}
 	if err := postJSON(server(*srvFlag, creds.Server)+"/api/submit", creds.Token, body, &res); err != nil {
 		return fmt.Errorf("submit: %w", err)
 	}

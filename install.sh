@@ -1,10 +1,10 @@
 #!/bin/sh
 # Installs the latest tokenstat release:
-#   curl -fsSL https://raw.githubusercontent.com/tornikegomareli/tokenstat/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/mberrishdev/tokenstat/main/install.sh | sh
 # Set TOKENSTAT_INSTALL_DIR to install somewhere other than ~/.local/bin.
 set -eu
 
-repo="tornikegomareli/tokenstat"
+repo="mberrishdev/tokenstat"
 dir="${TOKENSTAT_INSTALL_DIR:-$HOME/.local/bin}"
 base="${TOKENSTAT_BASE_URL:-https://github.com/$repo/releases/latest/download}"
 

@@ -59,19 +59,19 @@ For each Claude Code and Codex version, tokenstat shows the context sent before 
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/tornikegomareli/tokenstat/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/mberrishdev/tokenstat/main/install.sh | sh
 ```
 
 The script downloads the latest release for your system, checks its SHA-256 checksum, and puts `tokenstat` in `~/.local/bin`. To install somewhere else, set `TOKENSTAT_INSTALL_DIR`:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/tornikegomareli/tokenstat/main/install.sh | TOKENSTAT_INSTALL_DIR="$HOME/bin" sh
+curl -fsSL https://raw.githubusercontent.com/mberrishdev/tokenstat/main/install.sh | TOKENSTAT_INSTALL_DIR="$HOME/bin" sh
 ```
 
 With Go 1.25 or newer, you can also build it yourself:
 
 ```sh
-go install github.com/tornikegomareli/tokenstat@latest
+go install github.com/mberrishdev/tokenstat@latest
 ```
 
 Requirements:
