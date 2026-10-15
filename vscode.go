@@ -24,17 +24,17 @@ import (
 // times the number of rounds. The logs do not split the prompt into cache
 // reads and new input, so all of it counts as input.
 
-// vscodeRoots returns the folders where VS Code keeps chat sessions.
-func vscodeRoots(home string) []string {
-	var users []string
-	for _, app := range []string{"Code", "Code - Insiders"} {
-		users = append(users,
-			filepath.Join(home, "Library", "Application Support", app, "User"), // macOS
-			filepath.Join(home, ".config", app, "User"),                        // Linux
-		)
+// vscodeRoots returns the folders where VS Code keeps chat sessions: under
+// ~/Library/Application Support on macOS, ~/.config on Linux, and
+// %AppData% on Windows.
+func vscodeRoots() []string {
+	config, err := os.UserConfigDir()
+	if err != nil {
+		return nil
 	}
 	var roots []string
-	for _, u := range users {
+	for _, app := range []string{"Code", "Code - Insiders"} {
+		u := filepath.Join(config, app, "User")
 		roots = append(roots, filepath.Join(u, "workspaceStorage"), filepath.Join(u, "globalStorage", "emptyWindowChatSessions"))
 	}
 	return roots
@@ -210,7 +210,11 @@ func vscodeProject(path string) string {
 	}
 	for _, s := range []string{w.Folder, w.Workspace} {
 		if u, err := url.Parse(s); err == nil && u.Scheme == "file" && u.Path != "" {
-			return strings.TrimSuffix(u.Path, ".code-workspace")
+			p := u.Path
+			if len(p) > 2 && p[0] == '/' && p[2] == ':' { // /c:/Users/... on Windows
+				p = p[1:]
+			}
+			return strings.TrimSuffix(p, ".code-workspace")
 		}
 	}
 	return "VS Code"

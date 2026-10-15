@@ -49,7 +49,7 @@ func load() data {
 	claude, failedClaude := scan(findJSONL(filepath.Join(home, ".claude", "projects"), filepath.Join(home, ".config", "claude", "projects")), parseClaude)
 	codex, failedCodex := scan(findJSONL(filepath.Join(codexHome, "sessions"), filepath.Join(codexHome, "archived_sessions")), parseCodex)
 	copilot, failedCopilot := scan(findJSONL(filepath.Join(home, ".copilot", "session-state")), parseCopilot)
-	vscode, failedVSCode := scan(findChatSessions(vscodeRoots(home)...), parseVSCode)
+	vscode, failedVSCode := scan(findChatSessions(vscodeRoots()...), parseVSCode)
 
 	var d data
 	d.failed = failedClaude + failedCodex + failedCopilot + failedVSCode
@@ -82,14 +82,16 @@ func load() data {
 	}
 
 	d.usage = append(append(dedupe(recs[Claude]), dedupe(recs[Codex])...), dedupe(recs[Copilot])...)
+	// Projects use / on every system, so Windows paths shorten like the others.
+	home = filepath.ToSlash(home)
 	for i := range d.usage {
 		d.usage[i].Time = d.usage[i].Time.Local()
-		d.usage[i].Project = tilde(d.usage[i].Project, home)
+		d.usage[i].Project = tilde(filepath.ToSlash(d.usage[i].Project), home)
 	}
 	d.outputs = dedupeOutputs(outputs)
 	for i := range d.outputs {
 		d.outputs[i].Time = d.outputs[i].Time.Local()
-		d.outputs[i].Project = tilde(d.outputs[i].Project, home)
+		d.outputs[i].Project = tilde(filepath.ToSlash(d.outputs[i].Project), home)
 		d.outputs[i].Detail = strings.ReplaceAll(d.outputs[i].Detail, home, "~")
 	}
 	setLimitPoints(d.usage)

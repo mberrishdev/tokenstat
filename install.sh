@@ -16,7 +16,7 @@ fail() {
 os=$(uname -s | tr '[:upper:]' '[:lower:]')
 case "$os" in
 darwin | linux) ;;
-*) fail "$os is not supported. Releases exist for macOS and Linux." ;;
+*) fail "$os is not supported here. On Windows, use install.ps1 from PowerShell." ;;
 esac
 
 case "$(uname -m)" in

@@ -68,15 +68,21 @@ The script downloads the latest release for your system, checks its SHA-256 chec
 curl -fsSL https://raw.githubusercontent.com/mberrishdev/tokenstat/main/install.sh | TOKENSTAT_INSTALL_DIR="$HOME/bin" sh
 ```
 
+On Windows, run this in PowerShell. It installs `tokenstat.exe` to `%LOCALAPPDATA%\Programs\tokenstat` and adds that folder to your PATH:
+
+```powershell
+irm https://raw.githubusercontent.com/mberrishdev/tokenstat/main/install.ps1 | iex
+```
+
 With Go 1.25 or newer, you can also build it yourself:
 
 ```sh
-go install github.com/mberrishdev/tokenstat@latest
+git clone https://github.com/mberrishdev/tokenstat && cd tokenstat && go install .
 ```
 
 Requirements:
 
-- macOS or Linux, on arm64 or x86-64. Windows is not supported yet.
+- macOS, Linux, or Windows, on arm64 or x86-64. On Windows, use Windows Terminal or PowerShell; the logs are in the same folders under `%USERPROFILE%`, and VS Code's under `%APPDATA%\Code`.
 - Logs from Claude Code (`~/.claude/projects`), Codex (`~/.codex/sessions`, or `$CODEX_HOME/sessions`), Copilot CLI (`~/.copilot/session-state`), or Copilot Chat in VS Code (the `chatSessions` folders of its workspace storage).
 - A terminal window of at least 80 × 24.
 
