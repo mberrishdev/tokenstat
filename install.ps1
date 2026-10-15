@@ -1,11 +1,11 @@
 # Installs the latest tokenstat release on Windows, from PowerShell:
-#   irm https://raw.githubusercontent.com/mberrishdev/tokenstat/main/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/tornikegomareli/tokenstat/main/install.ps1 | iex
 # Set $env:TOKENSTAT_INSTALL_DIR to install somewhere other than
 # %LOCALAPPDATA%\Programs\tokenstat.
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue' # Invoke-WebRequest is much faster without the progress bar
 
-$repo = 'mberrishdev/tokenstat'
+$repo = 'tornikegomareli/tokenstat'
 $dir = if ($env:TOKENSTAT_INSTALL_DIR) { $env:TOKENSTAT_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'Programs\tokenstat' }
 $base = if ($env:TOKENSTAT_BASE_URL) { $env:TOKENSTAT_BASE_URL } else { "https://github.com/$repo/releases/latest/download" }
 
