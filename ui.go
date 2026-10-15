@@ -133,10 +133,14 @@ func (m *model) browse(k tea.KeyMsg) {
 		m.mode, m.inputErr = typingRange, ""
 		m.input = m.f.from.Format(dateFmt) + " " + m.f.to.Format(dateFmt)
 	case "t":
-		m.f.tool++
-		if m.f.tool > int(Codex) {
-			m.f.tool = -1
+		next := -1 // after the last tool, all tools
+		for _, t := range toolsIn(m.usage) {
+			if int(t) > m.f.tool {
+				next = int(t)
+				break
+			}
 		}
+		m.f.tool = next
 	case "p":
 		m.mode, m.input, m.cursor = pickingProject, "", 0
 	case "m":

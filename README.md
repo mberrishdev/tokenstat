@@ -6,7 +6,7 @@
   <img src=".github/assets/dashboard.png" width="100%" alt="The tokenstat dashboard: tokens by type, a daily bar chart for Claude Code and Codex, the top projects, and the top models" />
 </p>
 
-tokenstat is a terminal dashboard for the tokens that Claude Code and Codex use. It reads the session logs on your machine, so it needs no account and sends nothing anywhere. Pick a date range, a tool, a project, or a model, and every panel follows.
+tokenstat is a terminal dashboard for the tokens that Claude Code, Codex, and GitHub Copilot (CLI and VS Code) use. It reads the session logs on your machine, so it needs no account and sends nothing anywhere. Pick a date range, a tool, a project, or a model, and every panel follows.
 
 ## Filter everything
 
@@ -77,7 +77,7 @@ go install github.com/tornikegomareli/tokenstat@latest
 Requirements:
 
 - macOS or Linux, on arm64 or x86-64. Windows is not supported yet.
-- Logs from Claude Code (`~/.claude/projects`) or Codex (`~/.codex/sessions`, or `$CODEX_HOME/sessions`).
+- Logs from Claude Code (`~/.claude/projects`), Codex (`~/.codex/sessions`, or `$CODEX_HOME/sessions`), Copilot CLI (`~/.copilot/session-state`), or Copilot Chat in VS Code (the `chatSessions` folders of its workspace storage).
 - A terminal window of at least 80 × 24.
 
 ## Using it
@@ -93,6 +93,17 @@ Run `tokenstat`.
 
 Set `NO_COLOR=1` to turn off colors.
 
+## Leaderboard
+
+You can put your totals on the public leaderboard:
+
+```sh
+tokenstat login    # sign in with GitHub
+tokenstat submit   # send daily totals
+```
+
+`submit` sends one row per day, tool, and model: the token counts and the number of calls. It does not send projects, paths, sessions, commands, or titles. Run `tokenstat submit -dry-run` to see the rows first. `tokenstat logout` forgets the login. Set `TOKENSTAT_SERVER` to use another leaderboard.
+
 ## How it counts
 
 - Each model call counts once. Claude Code writes one line for each part of a reply, and resumed or forked sessions copy old lines. tokenstat keeps one copy of each call.
@@ -100,6 +111,8 @@ Set `NO_COLOR=1` to turn off colors.
 - tokenstat sees only the logs that are still on disk. Claude Code deletes old transcripts after the number of days in its `cleanupPeriodDays` setting.
 - Codex limit points also include Codex use on other devices and on the web.
 - Claude Code logs do not record plan limits, so the limit view covers Codex only.
+- Copilot CLI logs the tokens of a session only when it ends or is paused, so a running session counts once it stops. Those tokens count on the day it stopped. The logs have no tokens per call, so the spike, session, timeline, and drift views leave Copilot out.
+- VS Code writes the prompt size of the latest model call of a request, and not for every call. tokenstat counts the mean written prompt times the calls of the request. VS Code does not split prompts into cache reads and new input, so for VS Code all of it counts as input.
 
 ## Remove
 
