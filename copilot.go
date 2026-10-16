@@ -7,12 +7,6 @@ import (
 	"time"
 )
 
-// Copilot CLI keeps one folder per session in ~/.copilot/session-state,
-// with the events in events.jsonl. It does not log the tokens of each call.
-// Instead, every session.shutdown event holds the session's tokens so far,
-// by model. The totals grow across resumes, so each shutdown counts only
-// the rise since the shutdown before it, at the time of the shutdown.
-
 type copilotLine struct {
 	Type      string    `json:"type"`
 	ID        string    `json:"id"`
@@ -23,21 +17,25 @@ type copilotLine struct {
 		Context        struct {
 			Cwd string `json:"cwd"`
 		} `json:"context"`
-		ModelMetrics map[string]struct {
-			Requests struct {
-				Count int `json:"count"`
-			} `json:"requests"`
-			Usage struct {
-				Input      int64 `json:"inputTokens"` // includes cache reads
-				Output     int64 `json:"outputTokens"`
-				CacheRead  int64 `json:"cacheReadTokens"`
-				CacheWrite int64 `json:"cacheWriteTokens"`
-			} `json:"usage"`
-		} `json:"modelMetrics"`
+		ModelMetrics       copilotMetrics `json:"modelMetrics"` // session.shutdown
+		AccountingSnapshot struct {
+			ModelMetrics copilotMetrics `json:"modelMetrics"` // session.usage_checkpoint
+		} `json:"accountingSnapshot"`
 	} `json:"data"`
 }
 
-// copilotTotal is what one model used in a session up to a shutdown.
+type copilotMetrics map[string]struct {
+	Requests struct {
+		Count int `json:"count"`
+	} `json:"requests"`
+	Usage struct {
+		Input      int64 `json:"inputTokens"` // includes cache reads
+		Output     int64 `json:"outputTokens"`
+		CacheRead  int64 `json:"cacheReadTokens"`
+		CacheWrite int64 `json:"cacheWriteTokens"`
+	} `json:"usage"`
+}
+
 type copilotTotal struct {
 	Tokens
 	calls int
@@ -64,11 +62,18 @@ func parseCopilot(path string, r io.Reader) (fileData, error) {
 			if l.Data.CopilotVersion != "" {
 				version = l.Data.CopilotVersion
 			}
-		case "session.shutdown":
-			for model, m := range l.Data.ModelMetrics {
+		case "session.shutdown", "session.usage_checkpoint":
+			metrics := l.Data.ModelMetrics
+			if l.Type == "session.usage_checkpoint" {
+				metrics = l.Data.AccountingSnapshot.ModelMetrics
+			}
+			for model, m := range metrics {
 				u := m.Usage
 				now := copilotTotal{Tokens{max(u.Input-u.CacheRead, 0), u.Output, u.CacheRead, u.CacheWrite}, m.Requests.Count}
 				p := prev[model]
+				if now.Total() < p.Total() {
+					p = copilotTotal{}
+				}
 				prev[model] = now
 				d := Tokens{
 					Input:      max(now.Input-p.Input, 0),
