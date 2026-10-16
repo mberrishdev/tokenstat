@@ -118,7 +118,7 @@ If you are not logged in, `submit` runs the login first. It sends one row per da
 - tokenstat sees only the logs that are still on disk. Claude Code deletes old transcripts after the number of days in its `cleanupPeriodDays` setting.
 - Codex limit points also include Codex use on other devices and on the web.
 - Claude Code logs do not record plan limits, so the limit view covers Codex only.
-- Copilot CLI logs the tokens of a session only when it ends or is paused, so a running session counts once it stops. Those tokens count on the day it stopped. The logs have no tokens per call, so the spike, session, timeline, and drift views leave Copilot out.
+- Copilot CLI, and VS Code's Copilot agent, log a session's tokens so far every minute or two while it runs, and again when it ends or pauses. Each snapshot counts the tokens added since the one before, on the day it was written. The logs have no tokens per call, so the spike, session, timeline, and drift views leave Copilot out.
 - VS Code writes the prompt size of the latest model call of a request, and not for every call. tokenstat counts the mean written prompt times the calls of the request. VS Code does not split prompts into cache reads and new input, so for VS Code all of it counts as input.
 
 ## Remove
